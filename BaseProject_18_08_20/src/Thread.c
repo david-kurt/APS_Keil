@@ -249,8 +249,8 @@ void Rx_Command (void const *argument){
 			else if(!strcmp(rx_char,Receive_Name_char)){
 				// Receive Name Received
 				UART_receivestring(rx_name,20);
-				osMessagePut(mid_Selected_Queue, Song_Selected, osWaitForever);
 				paused = 0;
+				osMessagePut(mid_Selected_Queue, Song_Selected, 0);
 			} // end else if
 			else if(!strcmp(rx_char, Play_File_char)){
          // Trigger1 received
@@ -357,7 +357,7 @@ void FS(void const *arg){
 					if(fread(&Audio_Buffer, 2, BUF_LEN, f) < BUF_LEN) {
 						fclose(f);
 						BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_ON);
-						osMessagePut(mid_CMDQueue, SongEnd,osWaitForever);
+						osMessagePut(mid_CMDQueue, SongEnd, osWaitForever);
 						end = 1;
 					}
 				}
