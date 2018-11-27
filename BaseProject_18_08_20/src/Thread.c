@@ -40,7 +40,8 @@ enum commands{
 	SendFiles,
 	PlaySong,
 	SongEnd,
-	PauseSong
+	PauseSong,
+	PauseNow
 };
 
 
@@ -161,15 +162,9 @@ void Process_Event(uint16_t event){
 				// Transition actions
 				// Play entry actions
 				LED_On(LED_Green);
-				if(paused) {
-					paused = 0;
-					BSP_AUDIO_OUT_Resume();
+
+				osMessagePut(mid_Command_FSQueue,PlaySong,osWaitForever);
 				}
-				else {
-					BSP_AUDIO_OUT_Stop(0);
-					osMessagePut(mid_Command_FSQueue,PlaySong,osWaitForever);
-				}
-			}
 			break;
 		case Play:
 			if(event == SongEnd){
@@ -187,8 +182,7 @@ void Process_Event(uint16_t event){
 				// Transition actions
 				// Idle entry actions
 				LED_On(LED_Red);
-				BSP_AUDIO_OUT_Pause();
-				paused = 1;
+				osMessagePut(mid_Command_FSQueue,PauseNow,osWaitForever);
 			}
     default:
       break;
@@ -308,64 +302,84 @@ void FS(void const *arg){
 	while(1){
 		evt = osMessageGet (mid_Command_FSQueue, osWaitForever); // wait for message
 		if (evt.status == osEventMessage) { // check for valid message
-			if( evt.value.v == SendFiles){
-				// SendFiles received
-				UART_send(StartFileList_msg,2); // Send start string
-				info.fileID = 0;
-				 while (ffind ("*.wav", &info) == fsOK) {
-					UART_send(info.name, strlen(info.name));
-					UART_send("\n",1);
+			switch(evt.value.v) {
+				case SendFiles:
+					// SendFiles received
+					UART_send(StartFileList_msg,2); // Send start string
+					info.fileID = 0;
+					while (ffind ("*.wav", &info) == fsOK) {
+						UART_send(info.name, strlen(info.name));
+						UART_send("\n",1);
 					}
-				//UART_send(file_name,len);
-				//UART_send("\n",1);
+					//UART_send(file_name,len);
+					//UART_send("\n",1);
 					
-				//fclose(f);
-				UART_send(EndFileList_msg,2); // Send end string
-				osMessagePut(mid_CMDQueue, SendComplete,osWaitForever);
-			} // if( evt.value.v == SendFiles)
-			else if( evt.value.v == PlaySong) {	
-				//fclose(f);
-				buffer = 1;
-				end = 0;
-				BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_OFF);
+					//fclose(f);
+					UART_send(EndFileList_msg,2); // Send end string
+					osMessagePut(mid_CMDQueue, SendComplete,osWaitForever);
+					break;
+					
+				case PlaySong:	
+					//fclose(f);
+					if (paused == 1){
+						BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_OFF);
+						BSP_AUDIO_OUT_ChangeBuffer((uint16_t*)Audio_Buffer,BUF_LEN);
+						paused = 0;
+					}
+					
+					else {
+						buffer = 1;
+						end = 0;
+						BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_OFF);
 				
-				f = fopen (rx_name,"r");
+						f = fopen (rx_name,"r");
 
-			// generate data for the audio buffer
-			if(fread(&Audio_Buffer, 2, BUF_LEN, f) < BUF_LEN) {
-				fclose(f);
-				BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_ON);
-				osMessagePut(mid_CMDQueue, SongEnd, osWaitForever);
-				end = 1;
-			}
+						// generate data for the audio buffer
+						if(fread(&Audio_Buffer, 2, BUF_LEN, f) < BUF_LEN) {
+							fclose(f);
+							BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_ON);
+							osMessagePut(mid_CMDQueue, SongEnd, osWaitForever);
+							end = 1;
+						}
 			
-			// Start the audio player
-			BSP_AUDIO_OUT_Play((uint16_t *)Audio_Buffer, BUF_LEN);
+						// Start the audio player
+						BSP_AUDIO_OUT_Play((uint16_t *)Audio_Buffer, BUF_LEN);
+					}
 			
-			while(!end) {
-				if(buffer == 1) {
-					buffer = 2;
-					if(fread(&Audio_Buffer2, 2, BUF_LEN, f) < BUF_LEN) {
-						fclose(f);
-						BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_ON);
-						osMessagePut(mid_CMDQueue, SongEnd,osWaitForever);
-						end = 1;
-					}
-				}
-				else{
-					buffer = 1;
-					if(fread(&Audio_Buffer, 2, BUF_LEN, f) < BUF_LEN) {
-						fclose(f);
-						BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_ON);
-						osMessagePut(mid_CMDQueue, SongEnd, osWaitForever);
-						end = 1;
-					}
-				}
+					while(!end) {
+						evt = osMessageGet(mid_Command_FSQueue, 0);
+						if (evt.status == osEventMessage) { // check for valid message
+							if( evt.value.v == PauseNow){
+								// PauseNow received
+								BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_ON);
+								paused = 1;
+								break;
+							}
+						}
 				
-				osMessagePut (mid_DMAQueue, buffer, osWaitForever);
-				osSemaphoreWait(SEM0_id, osWaitForever);
-			} // while(!end)
-			} // else if (evt.value.v == PlaySong)
+						if(buffer == 1) {
+							buffer = 2;
+							if(fread(&Audio_Buffer2, 2, BUF_LEN, f) < BUF_LEN) {
+								fclose(f);
+								BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_ON);
+								osMessagePut(mid_CMDQueue, SongEnd,osWaitForever);
+								end = 1;
+							}
+						}
+						else if(buffer == 2){
+							buffer = 1;
+							if(fread(&Audio_Buffer, 2, BUF_LEN, f) < BUF_LEN) {
+								fclose(f);
+								BSP_AUDIO_OUT_SetMute(AUDIO_MUTE_ON);
+								osMessagePut(mid_CMDQueue, SongEnd, osWaitForever);
+								end = 1;
+							}
+						}
+				
+						osMessagePut (mid_DMAQueue, buffer, osWaitForever);
+						osSemaphoreWait(SEM0_id, osWaitForever);
+					} // while(!end)
+			} // switch (evt.value.v)
 		} // if( evt.status == osEventMessage)
 	} // while(1)
 } // FS
@@ -374,6 +388,7 @@ void FS(void const *arg){
 /* This function is called when the requested data has been completely transferred. */
 void    BSP_AUDIO_OUT_TransferComplete_CallBack(void){
 	osEvent evt; // Receive Message object
+	
 	evt = osMessageGet (mid_DMAQueue, 0);
 	if (evt.status == osEventMessage) {
 		osSemaphoreRelease(SEM0_id);
